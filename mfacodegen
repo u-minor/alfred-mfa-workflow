@@ -1,0 +1,97 @@
+#!/bin/bash
+set -e
+PATH=/usr/local/bin:$PATH
+LIST_PATH=./mfalist.dat
+KEY_PATH=./mfa.key
+CRT_PATH=./mfa.crt
+
+usage() {
+  echo "Usage: $0 [-clh] [-s service] [-a service,key] [-d service]" 1>&2
+  exit 1
+}
+
+while getopts a:cd:ls:h OPT; do
+  case $OPT in
+    a)  cmd='add'
+        tmp=($(echo "$OPTARG" | tr ',' ' '))
+        service=${tmp[0]}
+        key=${tmp[1]}
+        ;;
+    c)  mode='copy'
+        ;;
+    d)  cmd='delete'
+        service=$OPTARG
+        ;;
+    l)  cmd='show'
+        ;;
+    s)  cmd='generate'
+        service=$OPTARG
+        ;;
+    h)  usage
+        ;;
+    \?) usage
+        ;;
+  esac
+done
+
+[ -z "$cmd" ] && usage
+
+addService() {
+  list=$(loadList | egrep -v "^${service}\t" || echo '')
+  ([ -n "$list" ] && echo -e "${list}"; echo -e "${service}\t${key}") \
+    | sort \
+    | openssl smime -encrypt -aes256 -binary -out $LIST_PATH -outform PEM $CRT_PATH
+  echo "$service added."
+}
+
+deleteService() {
+  list=$(loadList | egrep -v "^${service}\t" || echo '')
+  echo -e "${list}" \
+    | sort \
+    | openssl smime -encrypt -aes256 -binary -out $LIST_PATH -outform PEM $CRT_PATH
+  echo "$service deleted."
+}
+
+generateToken() {
+  list=$(loadList)
+  seckey=$(echo "${list}" | awk "\$1==\"${service}\"{print \$2}")
+  [ -z "$seckey" ] && { echo "Service ${service} not found." >&2; exit 1; }
+  if [ "$(uname)" = 'Darwin' -a "$mode" = 'copy' ]; then
+    echo -n $(oathtool -b --totp $seckey) | pbcopy
+  else
+    oathtool -b --totp $seckey
+  fi
+}
+
+loadList() {
+  if [ -f $LIST_PATH ]; then
+    if [ -p /dev/stdin ]; then
+      stdin=$(cat -)
+      openssl smime -decrypt -inkey $KEY_PATH -in $LIST_PATH -binary -inform PEM -passin "pass:$stdin"
+    else
+      openssl smime -decrypt -inkey $KEY_PATH -in $LIST_PATH -binary -inform PEM
+    fi
+  else
+    echo ''
+  fi
+}
+
+showServiceList() {
+  list=$(loadList)
+  echo "${list}" | cut -f1 | sort
+}
+
+case "$cmd" in
+  'add' )
+    addService
+    ;;
+  'delete' )
+    deleteService
+    ;;
+  'generate' )
+    generateToken
+    ;;
+  'show' )
+    showServiceList
+    ;;
+esac

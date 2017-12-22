@@ -1,0 +1,5 @@
+.DS_Store
+/mfa.crt
+/mfa.key
+/mfalist.dat
+/services.txt
